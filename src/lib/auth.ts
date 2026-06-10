@@ -2,8 +2,10 @@ import NextAuth, { type DefaultSession } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import bcrypt from 'bcryptjs';
+import { headers } from 'next/headers';
 import { z } from 'zod';
 import { prisma } from './db';
+import { checkRateLimit, RateLimits } from './rate-limit';
 
 declare module 'next-auth' {
   interface Session {
@@ -38,6 +40,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       async authorize(raw) {
         const parsed = credentialsSchema.safeParse(raw);
         if (!parsed.success) return null;
+
+        // Rate limiting for login attempts based on email + IP
+        const h = await headers();
+        const forwarded = h.get('x-forwarded-for');
+        const ip = forwarded?.split(',')[0]?.trim() ?? 'unknown';
+        const rateKey = `login:${parsed.data.email}:${ip}`;
+        // Use a pseudo-rate-limit check with the identifier
+        if (!checkRateLimit(rateKey, RateLimits.auth).allowed) {
+          // Return null to avoid leaking rate-limit info to attackers
+          return null;
+        }
 
         const user = await prisma.user.findUnique({
           where: { email: parsed.data.email },

@@ -2,14 +2,33 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db';
+import { checkRateLimit, getClientIp, RateLimits } from '@/lib/rate-limit';
 
 const schema = z.object({
   name: z.string().min(2).max(40).optional(),
   email: z.string().email(),
-  password: z.string().min(6).max(100),
+  password: z.string().min(8).max(100).regex(
+    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/,
+    'Password must contain at least one uppercase letter, one lowercase letter, and one number'
+  ),
 });
 
 export async function POST(req: Request) {
+  // Rate limiting
+  const ip = getClientIp(req);
+  const rate = checkRateLimit(ip, RateLimits.register);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: 'Too many registration attempts. Please try again later.' },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': String(rate.resetInSeconds),
+          'X-RateLimit-Remaining': '0',
+        },
+      }
+    );
+  }
   let json: unknown;
   try {
     json = await req.json();

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { checkRateLimit, getClientIp, RateLimits } from '@/lib/rate-limit';
 
 const profileSchema = z.object({
   name: z.string().min(2).max(40).optional(),
@@ -14,8 +15,11 @@ const profileSchema = z.object({
 });
 
 const passwordSchema = z.object({
-  currentPassword: z.string().min(6),
-  newPassword: z.string().min(6).max(100),
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8).max(100).regex(
+    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/,
+    'Password must contain at least one uppercase letter, one lowercase letter, and one number'
+  ),
 });
 
 export async function GET() {
@@ -44,7 +48,12 @@ export async function PATCH(req: Request) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const json = await req.json();
+  let json: unknown;
+  try {
+    json = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
   const parsed = profileSchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
@@ -68,8 +77,23 @@ export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const json = await req.json();
-  const parsed = passwordSchema.safeParse(json);
+  // Rate limiting for password change
+  const ip = getClientIp(req);
+  const rate = checkRateLimit(ip, RateLimits.auth);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: 'Too many attempts. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rate.resetInSeconds) } }
+    );
+  }
+
+  let json2: unknown;
+  try {
+    json2 = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+  const parsed = passwordSchema.safeParse(json2);
   if (!parsed.success) {
     return NextResponse.json({ error: 'invalid_input' }, { status: 400 });
   }

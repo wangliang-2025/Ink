@@ -1,9 +1,10 @@
 import { setRequestLocale, getTranslations } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
+import { cookies } from 'next/headers';
 import { Link } from '@/i18n/routing';
 import { auth } from '@/lib/auth';
-import { getPostBySlug } from '@/lib/posts';
+import { getPostBySlug, trackView, viewCooldownCookie } from '@/lib/posts';
 import { renderMarkdown, extractToc } from '@/lib/markdown';
 import { MarkdownContent } from '@/components/markdown-content';
 import { TableOfContents } from '@/components/table-of-contents';
@@ -11,7 +12,6 @@ import { CommentsSection } from '@/components/comments-section';
 import { PostActions } from '@/components/post-actions';
 import { DeletePostButton } from '@/components/delete-post-button';
 import { formatDate, readingTime } from '@/lib/utils';
-import { prisma } from '@/lib/db';
 import { Calendar, Clock, ArrowLeft, Eye, Folder, Lock, EyeOff, Pencil } from 'lucide-react';
 
 interface Props {
@@ -54,9 +54,14 @@ export default async function PostPage({ params }: Props) {
   const toc = extractToc(post.content);
   const minutes = readingTime(post.content);
 
-  prisma.post
-    .update({ where: { id: post.id }, data: { views: { increment: 1 } } })
-    .catch(() => {});
+  // Deduplicated view tracking (cookie-based, 30-min cooldown)
+  const didTrack = await trackView(post.id);
+  if (didTrack) {
+    const cookieStore = await cookies();
+    const { name: cookieName, value: cookieVal, maxAge } = viewCooldownCookie(post.id);
+    cookieStore.set(cookieName, cookieVal, { maxAge, path: '/', httpOnly: true, sameSite: 'lax', secure: true });
+  }
+  const displayViews = didTrack ? post.views + 1 : post.views;
 
   const isOwner = session?.user?.id === post.authorId;
   const canDelete = isOwner || session?.user?.role === 'admin';
@@ -146,7 +151,7 @@ export default async function PostPage({ params }: Props) {
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Eye className="h-4 w-4" />
-                {t('views', { count: post.views + 1 })}
+                {t('views', { count: displayViews })}
               </span>
               {(post.author?.displayName || post.author?.name) && (
                 <span>

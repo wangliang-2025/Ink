@@ -19,7 +19,18 @@ export async function listCategories(opts: { ownerId?: string | null; includeOwn
   }
   const cats = await prisma.category.findMany({
     where,
-    include: { _count: { select: { posts: true } } },
+    include: {
+      _count: {
+        select: {
+          posts: {
+            where: {
+              published: true,
+              visibility: { in: ['public', 'unlisted'] },
+            },
+          },
+        },
+      },
+    },
     orderBy: { name: 'asc' },
   });
   return cats.map((c) => ({
@@ -46,7 +57,9 @@ export async function createCategory(input: CategoryInput) {
   const baseSlug = slugify(input.name);
   let slug = baseSlug;
   let i = 1;
+  const MAX_ATTEMPTS = 1000;
   while (
+    i <= MAX_ATTEMPTS &&
     await prisma.category.findFirst({
       where: { slug, ownerId: input.ownerId ?? null },
     })
