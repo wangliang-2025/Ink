@@ -30,7 +30,7 @@ export async function GET(
     }
   }
 
-  const filenameSafe = post.slug.replace(/[^\w\-.]/g, '_');
+  const filenameSafe = (post.slug || post.id).replace(/[^\w\-.]/g, '_');
 
   if (format === 'html') {
     const html = await exportAsHtml(post, {

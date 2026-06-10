@@ -42,7 +42,6 @@ const baseAttributes = {
     'decoding',
     'referrerpolicy',
     'crossorigin',
-    'onerror',
     'className',
     'class',
     'data*',
@@ -119,33 +118,48 @@ const embedSchema = {
  *   - a data-img-src mirror attribute used by the client-side onerror
  *     fallback to display a placeholder when the source fails to load.
  *
+ * Also enforces that every <iframe> has a sandbox attribute for XSS
+ * protection. If no sandbox is present, a restrictive default is applied.
+ *
  * Sanitization runs after this plugin, so any attributes added here that
- * aren't in the allow-list will be stripped — we've extended the img
- * allow-list above accordingly.
+ * aren't in the allow-list will be stripped — we've extended the img/iframe
+ * allow-lists above accordingly.
  */
 function rehypeOptimizeImages() {
   return (tree: Root) => {
     visit(tree, 'element', (node: Element) => {
-      if (node.tagName !== 'img') return;
-      const props = (node.properties ??= {});
-      if (!props.loading) props.loading = 'lazy';
-      if (!props.decoding) props.decoding = 'async';
+      if (node.tagName === 'img') {
+        const props = (node.properties ??= {});
+        if (!props.loading) props.loading = 'lazy';
+        if (!props.decoding) props.decoding = 'async';
 
-      const src = typeof props.src === 'string' ? props.src : '';
-      if (src && /^https?:/i.test(src) && !props.referrerPolicy) {
-        props.referrerPolicy = 'no-referrer';
+        const src = typeof props.src === 'string' ? props.src : '';
+        if (src && /^https?:/i.test(src) && !props.referrerPolicy) {
+          props.referrerPolicy = 'no-referrer';
+        }
+        // Mirror src so client onerror handler can reveal a placeholder.
+        if (src) props.dataImgSrc = src;
+        // Flag so CSS can style broken images.
+        props.className = [
+          ...(Array.isArray(props.className)
+            ? (props.className as string[])
+            : typeof props.className === 'string'
+              ? [props.className]
+              : []),
+          'md-img',
+        ];
       }
-      // Mirror src so client onerror handler can reveal a placeholder.
-      if (src) props.dataImgSrc = src;
-      // Flag so CSS can style broken images.
-      props.className = [
-        ...(Array.isArray(props.className)
-          ? (props.className as string[])
-          : typeof props.className === 'string'
-            ? [props.className]
-            : []),
-        'md-img',
-      ];
+
+      // Enforce sandbox on iframes for XSS protection
+      if (node.tagName === 'iframe') {
+        const props = (node.properties ??= {});
+        if (!props.sandbox) {
+          // Restrictive default: allow nothing, but common embeds need
+          // scripts + same-origin. Site owners can override via the
+          // sandbox attribute in their raw HTML.
+          props.sandbox = 'allow-scripts allow-same-origin allow-popups';
+        }
+      }
     });
   };
 }
@@ -177,11 +191,27 @@ const buildProcessor = (allowEmbed: boolean) => {
     .use(rehypeStringify, { allowDangerousHtml: true });
 };
 
+// ─── Processor cache ──────────────────────────────────────────────────
+// Building the unified pipeline (especially rehypePrettyCode / Shiki) is
+// expensive — several hundred milliseconds. Cache the two variants (embed
+// vs safe) at module scope so they're only built once per process lifetime.
+let _processorEmbed: ReturnType<typeof buildProcessor> | null = null;
+let _processorSafe: ReturnType<typeof buildProcessor> | null = null;
+
+function getProcessor(allowEmbed: boolean) {
+  if (allowEmbed) {
+    if (!_processorEmbed) _processorEmbed = buildProcessor(true);
+    return _processorEmbed;
+  }
+  if (!_processorSafe) _processorSafe = buildProcessor(false);
+  return _processorSafe;
+}
+
 export async function renderMarkdown(
   markdown: string,
   opts: { allowEmbed?: boolean } = {}
 ): Promise<string> {
-  const file = await buildProcessor(opts.allowEmbed ?? true).process(markdown);
+  const file = await getProcessor(opts.allowEmbed ?? true).process(markdown);
   let html = String(file);
   // Wrap iframes for responsive display (only present when allowEmbed=true).
   html = html.replace(

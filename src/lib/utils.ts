@@ -5,8 +5,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatDate(date: Date | string, locale = 'zh-CN') {
+export function formatDate(date: Date | string | null | undefined, locale = 'zh-CN'): string {
+  if (!date) return '';
   const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return '';
   return new Intl.DateTimeFormat(locale, {
     year: 'numeric',
     month: 'long',
@@ -14,8 +16,10 @@ export function formatDate(date: Date | string, locale = 'zh-CN') {
   }).format(d);
 }
 
-export function formatDateShort(date: Date | string, locale = 'zh-CN') {
+export function formatDateShort(date: Date | string | null | undefined, locale = 'zh-CN'): string {
+  if (!date) return '';
   const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return '';
   return new Intl.DateTimeFormat(locale, {
     year: 'numeric',
     month: '2-digit',
@@ -24,10 +28,12 @@ export function formatDateShort(date: Date | string, locale = 'zh-CN') {
 }
 
 export function readingTime(content: string): number {
-  // Roughly 200 wpm for English, 400 cpm for Chinese; we average.
-  const words = content.trim().split(/\s+/).length;
-  const chars = content.length;
-  const minutes = Math.max(1, Math.round((words / 200 + chars / 600) / 2));
+  // Count CJK characters separately (400 cpm)
+  const cjkChars = (content.match(/[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]/g) || []).length;
+  // Count non-CJK words (200 wpm)
+  const nonCjkContent = content.replace(/[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]/g, '');
+  const words = nonCjkContent.trim().split(/\s+/).filter(Boolean).length;
+  const minutes = Math.max(1, Math.round(cjkChars / 400 + words / 200));
   return minutes;
 }
 

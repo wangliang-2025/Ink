@@ -32,8 +32,15 @@ const postSchema = z.object({
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const page = Number(url.searchParams.get('page') ?? '1');
-  const pageSize = Number(url.searchParams.get('pageSize') ?? '10');
+  const rawPage = Number(url.searchParams.get('page') ?? '1');
+  const rawPageSize = Number(url.searchParams.get('pageSize') ?? '10');
+
+  // Validate pagination parameters
+  const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1;
+  const pageSize = Number.isFinite(rawPageSize) && rawPageSize >= 1 && rawPageSize <= 100
+    ? Math.floor(rawPageSize)
+    : 10;
+
   const locale = url.searchParams.get('locale') ?? undefined;
   const tag = url.searchParams.get('tag') ?? undefined;
   const category = url.searchParams.get('category') ?? undefined;

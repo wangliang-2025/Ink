@@ -51,6 +51,18 @@ export async function GET(
     },
   });
   if (!post) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  // Visibility check: private/unlisted/draft posts require ownership or admin
+  const isPublic = post.published && (post.visibility === 'public' || post.visibility === 'unlisted');
+  if (!isPublic) {
+    const session = await auth();
+    const isOwner = session?.user?.id === post.authorId;
+    const isAdmin = session?.user?.role === 'admin';
+    if (!isOwner && !isAdmin) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+  }
+
   return NextResponse.json({ post });
 }
 
@@ -62,7 +74,13 @@ export async function PATCH(
   const ok = await ensureOwner(id);
   if (!ok) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const json = await req.json();
+  let json: unknown;
+  try {
+    json = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+
   const parsed = updateSchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
@@ -84,6 +102,10 @@ export async function DELETE(
   const ok = await ensureOwner(id);
   if (!ok) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  await prisma.post.delete({ where: { id } });
-  return NextResponse.json({ ok: true });
+  try {
+    await prisma.post.delete({ where: { id } });
+    return NextResponse.json({ ok: true });
+  } catch {
+    return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
+  }
 }
